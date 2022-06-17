@@ -1,4 +1,12 @@
-/* Copyright 2020 the Deno authors. All rights reserved. MIT license. */
+// Copyright 2022 the Deno authors. All rights reserved. MIT license.
+
+export interface PaginationProps {
+  pageCount: number;
+  currentPage: number;
+  perPage: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+}
 
 export function hasPrevious({ page }: { page: number }): boolean {
   return page > 1;

@@ -1,13 +1,19 @@
-/* Copyright 2020 the Deno authors. All rights reserved. MIT license. */
+// Copyright 2022 the Deno authors. All rights reserved. MIT license.
 
-import React from "react";
+/** @jsx h */
+import { ComponentChildren, h } from "$fresh/runtime.ts";
+import { tw } from "@twind";
 
-function InlineCode(props: { children: React.ReactNode }): React.ReactElement {
+export function InlineCode(
+  props: { children: ComponentChildren; id?: string },
+) {
   return (
-    <code className="py-1 px-2 font-mono bg-gray-100 text-sm break-all">
+    <code
+      class={tw
+        `py-1 px-2 font-mono bg-gray-100 text-sm break-all rounded-[6px]`}
+      id={props.id}
+    >
       {props.children}
     </code>
   );
 }
-
-export default InlineCode;
