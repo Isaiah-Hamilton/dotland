@@ -1,11 +1,10 @@
 // Copyright 2022 the Deno authors. All rights reserved. MIT license.
 
-/** @jsx h */
-import { h } from "$fresh/runtime.ts";
-import { tw } from "@twind";
-import { Prism } from "@/util/prism_utils.ts";
+// deno-fmt-ignore-file
 import { escape as htmlEscape } from "$he";
-import { normalizeTokens } from "@/util/prism_utils.ts";
+import { normalizeTokens, Prism } from "@/util/prism_utils.ts";
+import { extractLinkUrl } from "@/util/registry_utils.ts";
+import * as Icons from "./Icons.tsx";
 
 export interface CodeBlockProps {
   code: string;
@@ -27,6 +26,9 @@ export interface CodeBlockProps {
     | "wasm"
     | "makefile"
     | "dockerfile";
+  url: URL;
+  class?: string;
+  enableCopyButton?: boolean;
 }
 
 export function RawCodeBlock({
@@ -35,12 +37,12 @@ export function RawCodeBlock({
   class: extraClassName,
   disablePrefixes,
   enableLineRef = false,
+  enableCopyButton = false,
+  url,
 }: CodeBlockProps & {
-  class?: string;
   enableLineRef?: boolean;
 }) {
-  const codeDivClasses = tw
-    `text-gray-300 text-right select-none inline-block mr-2 sm:mr-3`;
+  const codeDivClasses = "text-gray-300 text-right select-none inline-block mr-2 sm:mr-3";
   const newLang = language === "shell"
     ? "bash"
     : language === "text"
@@ -60,20 +62,26 @@ export function RawCodeBlock({
 
   const tokens = normalizeTokens(Prism.tokenize(code, grammar));
 
+  // The copy button is bigger than a single line, so if the copy button
+  // is enabled we need to center the content.
+  let flexCenter = "";
+  if (enableCopyButton && tokens.length == 1) {
+    flexCenter = "items-center";
+  }
+
   return (
     <pre
-      className={tw`text-sm gfm-highlight highlight-source-${newLang} flex ${
-        extraClassName ?? ""
-      }`}
+      class={
+        `group text-sm flex ${extraClassName ?? ""} gfm-highlight highlight-source-${newLang} ${flexCenter}`}
       data-color-mode="light"
       data-light-theme="light"
     >
       {enableLineRef &&
         (
-          <div className={codeDivClasses}>
+          <div class={codeDivClasses}>
             {tokens.map((_, i) => (
               <a
-                className={tw`text-gray-500 token text-right block`}
+                class="text-gray-500 text-right block token"
                 tab-index={-1}
                 href={`#L${i + 1}`}
               >
@@ -85,19 +93,44 @@ export function RawCodeBlock({
       {!disablePrefixes && (newLang === "bash") &&
         (
           <code>
-            <div className={codeDivClasses}>$</div>
+            <div class={codeDivClasses}>$</div>
           </code>
         )}
-      <div className={tw`block w-full overflow-y-auto`}>
+      <div class="block w-full overflow-y-auto">
         {tokens.map((line, i) => {
           return (
-            <span id={"L" + (i + 1)} className={tw`block`}>
+            <span id={"L" + (i + 1)} class="block">
               {line.map((token) => {
                 if (token.empty) {
                   return <br />;
                 }
+
+                if (token.types.includes("string")) {
+                  const result = extractLinkUrl(
+                    token.content,
+                    url.origin + url.pathname,
+                  );
+                  if (result) {
+                    const [href, specifier, quote] = result;
+                    return (
+                      <span
+                        class={"token " +
+                          token.types.join(" ")}
+                      >
+                        {quote}
+                        <a
+                          class="hover:underline"
+                          href={href + "?source"}
+                        >
+                          {specifier}
+                        </a>
+                        {quote}
+                      </span>
+                    );
+                  }
+                }
                 return (
-                  <span className={"token " + token.types.join(" ")}>
+                  <span class={"token " + token.types.join(" ")}>
                     {token.content}
                   </span>
                 );
@@ -106,17 +139,25 @@ export function RawCodeBlock({
           );
         })}
       </div>
+      {enableCopyButton &&
+      (
+        <button
+          class="opacity-0 group-hover:opacity-100 rounded border border-[#D2D2DC] p-1.5 self-start"
+          // @ts-ignore onClick does support strings
+          onClick={`navigator?.clipboard?.writeText('${code.trim()}');`}
+        >
+          <Icons.Copy />
+        </button>
+      )}
     </pre>
   );
 }
 
-export function CodeBlock({ code, language, disablePrefixes }: CodeBlockProps) {
+export function CodeBlock(props: CodeBlockProps) {
   return (
     <RawCodeBlock
-      code={code}
-      language={language}
-      disablePrefixes={disablePrefixes}
-      class={tw`p-4`}
+      {...props}
+      class={`p-4 bg-ultralight rounded-lg ${props.class ?? ""}`}
     />
   );
 }

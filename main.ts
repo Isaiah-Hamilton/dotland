@@ -1,52 +1,51 @@
-#!/usr/bin/env -S deno run --allow-read --allow-net --allow-env --allow-run --allow-hrtime --no-check --watch
-
 // Copyright 2022 the Deno authors. All rights reserved. MIT license.
 
 /// <reference no-default-lib="true" />
 /// <reference lib="dom" />
+/// <reference lib="dom.iterable" />
 /// <reference lib="dom.asynciterable" />
 /// <reference lib="deno.ns" />
-/// <reference lib="deno.unstable" />
 
 import { ServerContext } from "$fresh/server.ts";
-import { Fragment, h } from "$fresh/runtime.ts";
 import { serve } from "$std/http/server.ts";
-import { router } from "$router";
+import { lookupSymbol } from "./util/doc_utils.ts";
 import { withLog } from "./util/ga_utils.ts";
 import { setup } from "$doc_components/services.ts";
 
+import twindPlugin from "$fresh/plugins/twind.ts";
+import twindConfig from "./twind.config.ts";
+
 import manifest from "./fresh.gen.ts";
 
-import { routes as completionsV2Routes } from "./completions_v2.ts";
-
-const docland = "https://doc.deno.land/";
 await setup({
-  resolveHref(current, symbol) {
-    // FIXME(bartlomieju): special casing for std here is not ideal
-    if (symbol && current.startsWith("/std")) {
-      current = `https://deno.land${current}`;
+  resolveHref(current: URL, symbol?: string) {
+    const url = new URL(current);
+    if (symbol) {
+      url.searchParams.set("s", symbol);
+    } else {
+      url.searchParams.delete("s");
     }
-    return symbol ? `${docland}${current}/~/${symbol}` : current;
+    return url.href;
   },
   lookupHref(
-    current: string,
+    current: URL,
     namespace: string | undefined,
     symbol: string,
   ): string | undefined {
-    // FIXME(bartlomieju): special casing for std here is not ideal
-    if (current.startsWith("/std")) {
-      current = `https://deno.land${current}`;
-    }
-    return namespace
-      ? `${docland}${current}/~/${namespace}.${symbol}`
-      : `${docland}${current}/~/${symbol}`;
+    return lookupSymbol(current, namespace, symbol);
   },
-  runtime: { Fragment, h },
+  resolveSourceHref(url, line) {
+    if (!url.startsWith("https://deno.land")) {
+      return url;
+    }
+    return line ? `${url}?source#L${line}` : `${url}?source`;
+  },
 });
 
-const ctx = await ServerContext.fromManifest(manifest);
+const ctx = await ServerContext.fromManifest(manifest, {
+  plugins: [twindPlugin(twindConfig)],
+});
 
-const innerHandler = withLog(ctx.handler());
-const handler = router(completionsV2Routes, innerHandler);
+const handler = withLog(ctx.handler());
 
 serve(handler);

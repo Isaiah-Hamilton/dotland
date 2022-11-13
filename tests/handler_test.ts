@@ -7,32 +7,40 @@ import {
 } from "$std/testing/asserts.ts";
 import { extractAltLineNumberReference } from "@/util/registry_utils.ts";
 import { ServerContext } from "$fresh/server.ts";
-import { Fragment, h } from "$fresh/runtime.ts";
 import { setup } from "$doc_components/services.ts";
 
-import manifest from "../fresh.gen.ts";
+import manifest from "@/fresh.gen.ts";
+import twindPlugin from "$fresh/plugins/twind.ts";
+import twindConfig from "../twind.config.ts";
 
-const docland = "https://doc.deno.land/";
 await setup({
-  resolveHref(current, symbol) {
-    return symbol
-      ? `${docland}https://deno.land${current}/~/${symbol}`
-      : current;
+  resolveHref(current: URL, symbol?: string) {
+    if (symbol) {
+      const url = new URL(current);
+      url.searchParams.set("s", symbol);
+      return url.href;
+    } else {
+      return current.href;
+    }
   },
   lookupHref(
-    current: string,
-    namespace: string | undefined,
-    symbol: string,
+    _current: URL,
+    _namespace: string | undefined,
+    _symbol: string,
   ): string | undefined {
-    return namespace
-      ? `${docland}${current}/~/${namespace}.${symbol}`
-      : `${docland}${current}/~/${symbol}`;
+    return undefined;
   },
-  runtime: { Fragment, h },
+  resolveSourceHref(url, line) {
+    return line ? `${url}?source#L${line}` : `${url}?source`;
+  },
 });
 
-const handleRequest = async (req: Request) =>
-  (await ServerContext.fromManifest(manifest)).handler()(req, {
+const serverCtx = await ServerContext.fromManifest(manifest, {
+  plugins: [twindPlugin(twindConfig)],
+});
+const handler = serverCtx.handler();
+const handleRequest = (req: Request) =>
+  handler(req, {
     localAddr: {
       transport: "tcp",
       hostname: "127.0.0.1",
@@ -58,7 +66,7 @@ Deno.test({
     const text = await res.text();
     assertStringIncludes(
       text,
-      "<title>Deno - A modern runtime for JavaScript and TypeScript</title>",
+      "<title>Deno — A modern runtime for JavaScript and TypeScript</title>",
     );
   },
 });
@@ -68,13 +76,16 @@ Deno.test({
   sanitizeResources: false, // TODO(@crowlKats): this shouldnt be required, something wrong with fetch resource consumption
   async fn() {
     const res = await handleRequest(
-      new Request("https://deno.land/std@0.127.0/version.ts?codeview", {
+      new Request("https://deno.land/std@0.127.0/version.ts?source", {
         headers: { Accept: BROWSER_ACCEPT },
       }),
     );
     assert(res.headers.get("Content-Type")?.includes("text/html"));
     const text = await res.text();
-    assertStringIncludes(text, "<title>std@0.127.0 | Deno</title>");
+    assertStringIncludes(
+      text,
+      "<title>/version.ts | std@0.127.0 | Deno</title>",
+    );
   },
 });
 
@@ -82,7 +93,7 @@ Deno.test({
   name: "/std/version.ts with Deno CLI Accept responds with redirect",
   async fn() {
     const res = await handleRequest(
-      new Request("https://deno.land/x/std/version.ts", {
+      new Request("https://deno.land/std/version.ts", {
         headers: { Accept: DENO_CLI_ACCEPT },
       }),
     );
@@ -96,8 +107,21 @@ Deno.test({
 });
 
 Deno.test({
+  name: "/x/std/version.ts redirects to /std/version.ts",
+  async fn() {
+    const res = await handleRequest(
+      new Request("https://deno.land/x/std/version.ts"),
+    );
+    assertEquals(res.status, 301);
+    assert(res.headers.get("Location")?.includes("/std/version.ts"));
+    assert(!res.headers.get("Location")?.includes("/x/"));
+    await res.text();
+  },
+});
+
+Deno.test({
   name:
-    "/std@v0.127.0/version.ts with Deno CLI Accept responds with raw typescript",
+    "/std@0.127.0/version.ts with Deno CLI Accept responds with raw typescript",
   async fn() {
     const res = await handleRequest(
       new Request("https://deno.land/std@0.127.0/version.ts", {
@@ -113,7 +137,7 @@ Deno.test({
 
 Deno.test({
   name:
-    "/std@0.127.0/fs/mod.ts:5:3 with Accept: 'text/html' responds with line number redirect",
+    "/std@0.127.0/fs/mod.ts:5:3 with Accept: 'text/html' responds with sourceview and line number redirect",
   async fn() {
     const res = await handleRequest(
       new Request("https://deno.land/std@0.127.0/fs/mod.ts:5:3", {
@@ -121,7 +145,11 @@ Deno.test({
       }),
     );
     assertEquals(res.status, 302);
-    assert(res.headers.get("Location")?.includes("/std@0.127.0/fs/mod.ts#L5"));
+    assert(
+      res.headers.get("Location")?.includes(
+        "/std@0.127.0/fs/mod.ts?source=#L5",
+      ),
+    );
     await res.text();
   },
 });

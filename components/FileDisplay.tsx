@@ -1,192 +1,108 @@
 // Copyright 2022 the Deno authors. All rights reserved. MIT license.
 
-/** @jsx runtime.h */
-/** @jsxFrag runtime.Fragment */
-import { runtime } from "$doc_components/services.ts";
-import { tw } from "@twind";
 import { RawCodeBlock } from "./CodeBlock.tsx";
 import { Markdown } from "./Markdown.tsx";
-import {
-  fileNameFromURL,
-  fileTypeFromURL,
-  isReadme,
-} from "@/util/registry_utils.ts";
+import { fileTypeFromURL } from "@/util/registry_utils.ts";
 import * as Icons from "./Icons.tsx";
-import { ModuleDoc } from "$doc_components/module_doc.tsx";
-import type { DocNode } from "@/util/doc.ts";
 
 export function FileDisplay(props: {
+  isStd: boolean;
+  version: string;
   raw?: string;
-  canonicalPath: string;
   sourceURL: string;
-  baseURL: string;
   filetypeOverride?: string;
-  repositoryURL?: string | null;
-  stdVersion?: string;
+  repositoryURL: string;
   url: URL;
-  docNodes: DocNode[] | null;
+  docable?: boolean;
 }) {
   const filetype = props.filetypeOverride ?? fileTypeFromURL(props.sourceURL);
-  const filename = fileNameFromURL(props.sourceURL);
-  const hasToggle = (filetype === "markdown" || (props.docNodes !== null));
 
-  const codeview = props.url.searchParams.has("codeview");
-  const searchDoc = new URL(props.url);
-  searchDoc.searchParams.delete("codeview");
-  const searchCode = new URL(props.url);
-  searchCode.searchParams.set("codeview", "");
+  const doc = new URL(props.url);
+  doc.searchParams.delete("source");
 
   return (
-    <div
-      class={tw
-        `shadow-sm rounded-lg border border-gray-200 overflow-hidden bg-white`}
-    >
-      <div
-        class={tw
-          `bg-gray-100 border-b border-gray-200 py-2 flex justify-between ${
-            hasToggle ? "pl-4 pr-2" : "px-4"
-          }`}
-      >
-        <div class={tw`flex items-center`}>
-          {isReadme(filename) && <Icons.LightOpenBook />}
-          <span class={tw`font-medium`}>
-            {props.canonicalPath === props.url.pathname
-              ? filename
-              : (
-                <a href={props.canonicalPath} class={tw`link`}>
-                  {filename}
-                </a>
-              )}
-          </span>
+    <div class="border border-gray-200 rounded-lg">
+      <div class="py-3 px-5 flex justify-between items-center border-b border-gray-200">
+        <div class="flex items-center gap-2">
+          <Icons.Source class="text-gray-500" />
+          <span class="text-lg leading-5 font-semibold">File</span>
         </div>
-        <div class={tw`inline-flex items-center`}>
-          <div>
-            {props.sourceURL && (
-              <a href={props.sourceURL} class={tw`link ml-4`}>
-                Raw
-              </a>
-            )}
-            {props.repositoryURL &&
-              (
-                <a href={props.repositoryURL} class={tw`link ml-4`}>
-                  Repository
-                </a>
-              )}
-          </div>
-          {hasToggle && (
-            <div class={tw`inline-block ml-4 inline-flex shadow-sm rounded-md`}>
-              <a
-                href={searchDoc.href}
-                class={tw
-                  `relative inline-flex items-center px-1.5 py-1.5 rounded-l-md border border-gray-300 text-sm font-medium text-gray-500 hover:bg-gray-50 ${
-                    !codeview ? "bg-white" : "bg-gray-100"
-                  }`}
-              >
-                {filetype === "markdown"
-                  ? (
-                    <>
-                      <span class={tw`sr-only`}>Preview</span>
-                      <Icons.Page />
-                    </>
-                  )
-                  : (
-                    <>
-                      <span class={tw`sr-only`}>Documentation</span>
-                      <Icons.OpenBook />
-                    </>
-                  )}
-              </a>
-              <a
-                href={searchCode.href}
-                class={tw
-                  `-ml-px relative inline-flex items-center px-1.5 py-1.5 rounded-r-md border border-gray-300 text-sm font-medium text-gray-500 hover:bg-gray-50 ${
-                    codeview ? "bg-white" : "bg-gray-100"
-                  }`}
-              >
-                <span class={tw`sr-only`}>Code</span>
-                <Icons.Code />
-              </a>
-            </div>
+        <div class="flex items-center gap-3">
+          <a
+            href={props.repositoryURL}
+            title="Repository URL"
+            class="icon-button"
+          >
+            <Icons.GitHub class="h-4 w-auto" />
+          </a>
+          {props.docable && (
+            <a href={doc.href} title="Documentation" class="icon-button">
+              <Icons.Docs class="h-4 w-auto" />
+            </a>
           )}
         </div>
       </div>
-      {(() => {
-        switch (filetype) {
-          case "javascript":
-          case "typescript":
-          case "tsx":
-          case "jsx":
-            if (!codeview && props.docNodes) {
+
+      <div>
+        {(() => {
+          switch (filetype) {
+            case "javascript":
+            case "typescript":
+            case "tsx":
+            case "jsx":
+            case "json":
+            case "yaml":
+            case "rust":
+            case "toml":
+            case "python":
+            case "wasm":
+            case "makefile":
+            case "dockerfile":
               return (
-                <ModuleDoc url={props.url.href}>
-                  {props.docNodes}
-                </ModuleDoc>
+                <RawCodeBlock
+                  code={props.raw!}
+                  language={filetype}
+                  enableLineRef={true}
+                  class="p-2 sm:px-3 md:px-4"
+                  url={props.url}
+                />
               );
-            }
-          /* falls through */
-          case "json":
-          case "yaml":
-          case "rust":
-          case "toml":
-          case "python":
-          case "wasm":
-          case "makefile":
-          case "dockerfile":
-            return (
-              <RawCodeBlock
-                code={props.raw!}
-                language={filetype}
-                enableLineRef={true}
-                class={tw`p-2 sm:px-3 md:px-4`}
-              />
-            );
-          case "html":
-            return (
-              <RawCodeBlock
-                code={props.raw!}
-                language="markdown"
-                enableLineRef={true}
-                class={tw`p-2 sm:px-3 md:px-4`}
-              />
-            );
-          case "markdown": {
-            if (codeview) {
+            case "html":
               return (
                 <RawCodeBlock
                   code={props.raw!}
                   language="markdown"
-                  enableLineRef={true}
-                  class={tw`p-2 sm:px-3 md:px-4`}
+                  class="p-2 sm:px-3 md:px-4"
+                  url={props.url}
+                  enableLineRef
                 />
               );
-            } else {
+            case "markdown": {
               return (
-                <div class={tw`px-4`}>
+                <div class="p-6">
                   <Markdown
-                    source={props.stdVersion === undefined
+                    source={props.isStd
                       ? props.raw!
-                      : props.raw!.replace(
-                        /\$STD_VERSION/g,
-                        props.stdVersion ?? "",
-                      )}
+                      : props.raw!.replace(/\$STD_VERSION/g, props.version)}
                   />
                 </div>
               );
             }
+            case "image":
+              return <img class="w-full" src={props.sourceURL} />;
+            default:
+              return (
+                <RawCodeBlock
+                  code={props.raw!}
+                  language="text"
+                  class="p-2 sm:px-3 md:px-4"
+                  url={props.url}
+                  enableLineRef
+                />
+              );
           }
-          case "image":
-            return <img class={tw`w-full`} src={props.sourceURL} />;
-          default:
-            return (
-              <RawCodeBlock
-                code={props.raw!}
-                language="text"
-                enableLineRef={true}
-                class={tw`p-2 sm:px-3 md:px-4`}
-              />
-            );
-        }
-      })()}
+        })()}
+      </div>
     </div>
   );
 }

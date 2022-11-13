@@ -3,15 +3,87 @@
 export const CDN_ENDPOINT = "https://cdn.deno.land/";
 const API_ENDPOINT = "https://api.deno.land/";
 
-export interface DirEntry {
+export interface CommonProps<T> {
+  isStd: boolean;
+  /** module name */
   name: string;
-  type: "file" | "dir" | "symlink";
-  size?: number;
-  target?: string;
+  /** module version */
+  version: string;
+  /** path in module */
+  path: string;
+  /** request URL */
+  url: URL;
+
+  /** url of the repo */
+  repositoryURL: string;
+
+  data: T;
 }
 
-export interface Entry extends DirEntry {
-  path?: string;
+// 100kb
+export const MAX_SYNTAX_HIGHLIGHT_FILE_SIZE = 100 * 1024;
+// 500kb
+export const MAX_FILE_SIZE = 500 * 1024;
+
+export async function getReadme(
+  name: string,
+  version: string,
+  entry: ModuleEntry,
+): Promise<string | undefined> {
+  const url = getSourceURL(name, version, entry.path);
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    await res.body?.cancel();
+    if (
+      res.status !== 400 &&
+      res.status !== 403 &&
+      res.status !== 404
+    ) {
+      console.error(new Error(`${res.status}: ${res.statusText}`));
+    }
+    return undefined;
+  }
+  if (entry.size < MAX_SYNTAX_HIGHLIGHT_FILE_SIZE) {
+    return await res.text();
+  } else {
+    await res.body!.cancel();
+    return undefined;
+  }
+}
+
+export interface RawFile {
+  content: string;
+  highlight: boolean;
+  url: string;
+}
+
+export async function getRawFile(
+  name: string,
+  version: string,
+  path: string,
+  size: number,
+): Promise<RawFile | Error> {
+  const url = getSourceURL(name, version, path);
+
+  const res = await fetch(url, { method: "GET" });
+
+  if (size < MAX_SYNTAX_HIGHLIGHT_FILE_SIZE) {
+    return {
+      content: await res.text(),
+      highlight: true,
+      url,
+    };
+  } else if (size < MAX_FILE_SIZE) {
+    return {
+      content: await res.text(),
+      highlight: false,
+      url,
+    };
+  } else {
+    await res.body!.cancel();
+    return new Error("Max display filesize exceeded");
+  }
 }
 
 export function getSourceURL(
@@ -19,7 +91,8 @@ export function getSourceURL(
   version: string,
   path: string,
 ): string {
-  return encodeURI(`${CDN_ENDPOINT}${module}/versions/${version}/raw${path}`);
+  return `${CDN_ENDPOINT}${encodeURIComponent(module)}` +
+    `/versions/${encodeURIComponent(version)}/raw${encodeURI(path)}`;
 }
 
 function pathJoin(...parts: string[]) {
@@ -28,122 +101,23 @@ function pathJoin(...parts: string[]) {
 }
 
 export function getRepositoryURL(
-  meta: VersionMetaInfo,
+  meta: {
+    repository: string;
+    ref: string;
+    subdir?: string;
+  },
   path: string,
   type = "blob",
-): string | undefined {
-  switch (meta.uploadOptions.type) {
-    case "github":
-      return `https://github.com/${
-        pathJoin(
-          meta.uploadOptions.repository,
-          type,
-          meta.uploadOptions.ref,
-          meta.uploadOptions.subdir ?? "",
-          path,
-        )
-      }`;
-    default:
-      return undefined;
-  }
-}
-
-export interface VersionMetaInfo {
-  uploadedAt: Date;
-  directoryListing: DirListing[];
-  uploadOptions: UploadOptions;
-}
-
-export interface UploadOptions {
-  type: "github";
-  repository: string;
-  subdir?: string;
-  ref: string;
-}
-
-export interface DirListing {
-  path: string;
-  type: "dir" | "file";
-  size?: number;
-}
-
-export async function getVersionMeta(
-  module: string,
-  version: string,
-): Promise<VersionMetaInfo | null> {
-  const url = `${CDN_ENDPOINT}${module}/versions/${
-    encodeURIComponent(
-      version,
+): string {
+  return `https://github.com/${
+    pathJoin(
+      meta.repository,
+      type,
+      meta.ref,
+      meta.subdir ?? "",
+      path,
     )
-  }/meta/meta.json`;
-  const res = await fetch(url, {
-    headers: {
-      accept: "application/json",
-    },
-  });
-  if (res.status === 403 || res.status === 404) {
-    await res.body?.cancel();
-    return null;
-  }
-  if (res.status !== 200) {
-    throw Error(
-      `Got an error (${res.status}) while getting the directory listing:\n${await res
-        .text()}`,
-    );
-  }
-
-  const meta = await res.json();
-  if (!meta) return null;
-
-  return {
-    uploadedAt: new Date(meta.uploaded_at),
-    directoryListing: meta.directory_listing,
-    uploadOptions: meta.upload_options,
-  };
-}
-
-export interface VersionDeps {
-  graph: DependencyGraph;
-}
-
-export interface DependencyGraph {
-  nodes: {
-    [url: string]: {
-      deps: string[];
-      size: number;
-    };
-  };
-}
-
-export async function getVersionDeps(
-  module: string,
-  version: string,
-): Promise<VersionDeps | null> {
-  const url = `${CDN_ENDPOINT}${module}/versions/${
-    encodeURIComponent(
-      version,
-    )
-  }/meta/deps_v2.json`;
-  const res = await fetch(url, {
-    headers: {
-      accept: "application/json",
-    },
-  });
-  if (res.status === 403 || res.status === 404) {
-    await res.body?.cancel();
-    return null;
-  }
-  if (res.status !== 200) {
-    throw Error(
-      `Got an error (${res.status}) while getting the dependency information:\n${await res
-        .text()}`,
-    );
-  }
-  const meta = await res.json();
-  if (!meta) return null;
-  return {
-    graph: meta.graph,
-  };
+  }`;
 }
 
 export interface VersionInfo {
@@ -154,12 +128,14 @@ export interface VersionInfo {
 
 export async function getVersionList(
   module: string,
+  signal?: AbortSignal,
 ): Promise<VersionInfo | null> {
   const url = `${CDN_ENDPOINT}${module}/meta/versions.json`;
   const res = await fetch(url, {
     headers: {
       accept: "application/json",
     },
+    signal,
   });
   if (res.status === 403 || res.status === 404) {
     await res.body?.cancel();
@@ -176,7 +152,7 @@ export async function getVersionList(
 
 export interface Module {
   name: string;
-  description: string;
+  description?: string;
   star_count: string;
 }
 
@@ -224,33 +200,6 @@ export async function listModules(
   };
 }
 
-export async function getModule(name: string): Promise<Module | null> {
-  const url = `${API_ENDPOINT}modules/${encodeURIComponent(name)}`;
-  const res = await fetch(url, {
-    headers: {
-      accept: "application/json",
-    },
-  });
-  if (res.status === 404) {
-    await res.body?.cancel();
-    return null;
-  }
-  if (res.status !== 200) {
-    throw Error(
-      `Got an error (${res.status}) while getting the module ${name}:\n${await res
-        .text()}`,
-    );
-  }
-  const data = await res.json();
-  if (!data.success) {
-    throw Error(
-      `Got an error (${data.info}) while getting the module ${name}:\n${await res
-        .text()}`,
-    );
-  }
-  return data.data;
-}
-
 export interface Build {
   id: string;
   options: {
@@ -284,10 +233,6 @@ export async function getBuild(id: string): Promise<Build | Error> {
   return data.data.build;
 }
 
-const markdownExtension = "(?:markdown|mdown|mkdn|mdwn|mkd|md)";
-const orgExtension = "org";
-const readmeBaseRegex = `readme(?:\\.(${markdownExtension}|${orgExtension}))?`;
-
 export function fileTypeFromURL(filename: string): string | undefined {
   const f = filename.toLowerCase();
   if (f.endsWith(".ts")) {
@@ -318,251 +263,70 @@ export function fileTypeFromURL(filename: string): string | undefined {
     return "yaml";
   } else if (f.endsWith(".htm") || f.endsWith(".html")) {
     return "html";
-  } else if (f.match(`\\.${markdownExtension}$`)) {
+  } else if (f.match(`\\.(?:markdown|mdown|mkdn|mdwn|mkd|md)$`)) {
     return "markdown";
-  } else if (f.match(`\\.${orgExtension}$`)) {
+  } else if (f.match(`\\.org$`)) {
     return "org";
   } else if (f.match(/\.(png|jpe?g|svg)/)) {
     return "image";
   }
 }
 
-export function fileNameFromURL(url: string): string {
-  const segments = decodeURI(url).split("/");
-  return segments[segments.length - 1];
-}
-
-export function findRootReadme(
-  directoryListing: DirListing[] | undefined,
-): DirEntry | undefined {
-  const listing =
-    directoryListing?.filter((d) =>
-      new RegExp(`^\\/(docs\\/|\\.github\\/)?${readmeBaseRegex}$`, "i").test(
-        d.path,
-      )
-    ).sort((a, b) => {
-      return a.path.length - b.path.length;
-    })[0];
-
-  return listing
-    ? {
-      name: listing.path.substring(1),
-      type: listing.type,
-      size: listing.size,
-    }
-    : undefined;
-}
-
-export function isReadme(filename: string): boolean {
-  return new RegExp(`^${readmeBaseRegex}$`, "i").test(filename);
-}
-
-export type Dep = { name: string; children: Dep[] };
-
-export function graphToTree(
-  graph: DependencyGraph,
+export function getModulePath(
   name: string,
-  visited: string[] = [],
-): Dep | undefined {
-  const dep = graph.nodes[name];
-  if (dep === undefined) return undefined;
-  visited.push(name);
-  return {
-    name,
-    children: dep.deps
-      .filter((n) => !visited.includes(n))
-      .map((n) => graphToTree(graph, n, visited)!),
-  };
-}
-
-export function flattenGraph(
-  graph: DependencyGraph,
-  name: string,
-  visited: string[] = [],
-): string[] | undefined {
-  const dep = graph.nodes[name];
-  if (dep === undefined) return undefined;
-  visited.push(name);
-  dep.deps
-    .filter((n) => !visited.includes(n))
-    .forEach((n) => flattenGraph(graph, n, visited)!);
-  return visited;
-}
-
-function matchX(url: string) {
-  const match = url.match(/^https:\/\/deno\.land\/x\/([^/]+)(.+)$/);
-  if (!match) return undefined;
-  return {
-    identifier: match[1],
-    path: match[2],
-  };
-}
-
-function matchStd(url: string) {
-  const match = url.match(/^https:\/\/deno\.land\/(x\/)?std(@([^/]+))?(.+)?$/);
-  if (!match) return undefined;
-  return {
-    version: match[2],
-    submodule: match[4],
-    path: match[5],
-  };
-}
-
-export function listExternalDependencies(
-  graph: DependencyGraph,
-  name: string,
-): string[] | undefined {
-  const visited = flattenGraph(graph, name);
-  const denolandDeps = new Set<string>();
-  const nestlandDeps = new Set<string>();
-  const rawGithubDeps = new Set<string>();
-  const jspmDeps = new Set<string>();
-  const depJsDeps = new Set<string>();
-  const other = new Set<string>();
-  if (visited) {
-    visited.forEach((dep) => {
-      // Count /std only once
-      const std = matchStd(dep);
-      if (std) {
-        denolandDeps.add(`https://deno.land/std${std.version ?? ""}`);
-        return;
-      }
-
-      // Count each module on /x only once.
-      const x = matchX(dep);
-      if (x) {
-        denolandDeps.add(`https://deno.land/x/${x.identifier}`);
-        return;
-      }
-
-      // Count each module on nest only once.
-      const nest = dep.match(/^https:\/\/x\.nest\.land\/([^/]+)(.+)$/);
-      if (nest) {
-        nestlandDeps.add(`https://nest.land/packages/${nest[1]}`);
-        return;
-      }
-
-      // Count each module on raw.githubusercontent.com only once.
-      const rawGithub = dep.match(
-        /^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)(.+)$/,
-      );
-      if (rawGithub) {
-        rawGithubDeps.add(
-          `https://github.com/${rawGithub[1]}/${rawGithub[2]}/tree/${
-            rawGithub[3]
-          }`,
-        );
-        return;
-      }
-
-      // Count each module on raw.githubusercontent.com only once.
-      const jspm = dep.match(
-        /^https:\/\/dev\.jspm\.io\/(npm:)?(@([^/@]+)\/([^/@]+)|([^/@]+))@(\d\.\d\.\d)(.+)$/,
-      );
-      if (jspm) {
-        jspmDeps.add(`https://dev.jspm.io/${jspm[2]}@${jspm[6]}`);
-        return;
-      }
-      if (dep.startsWith("https://dev.jspm.io")) return;
-
-      // Count each module on cdn.depjs.com only once.
-      const depJs = dep.match(/^https:\/\/cdn\.depjs\.com\/([^/]+)(.+)$/);
-      if (depJs) {
-        depJsDeps.add(`https://cdn.depjs.com/${depJs[1]}`);
-        return;
-      }
-
-      // Ignore pika internal imports
-      if (dep.startsWith("https://cdn.pika.dev/-/")) return;
-
-      other.add(dep);
-    });
-    const thisStd = matchStd(name);
-    if (thisStd) {
-      denolandDeps.delete(`https://deno.land/std${thisStd.version ?? ""}`);
-    }
-    const thisX = matchX(name);
-    if (thisX) {
-      denolandDeps.delete(`https://deno.land/x/${thisX.identifier}`);
-    }
-    return [
-      ...denolandDeps,
-      ...nestlandDeps,
-      ...rawGithubDeps,
-      ...jspmDeps,
-      ...depJsDeps,
-      ...other,
-    ].map((url) =>
-      url.replace("https://deno.land/x/std", "https://deno.land/std")
-    );
-  } else return undefined;
-}
-
-export interface Stats {
-  recently_added_modules: Array<Module & { created_at: string }>;
-  recently_uploaded_versions: Array<{
-    name: string;
-    version: string;
-    created_at: string;
-  }>;
-}
-
-export async function getStats(): Promise<Stats | null> {
-  const url = `${API_ENDPOINT}stats`;
-  const res = await fetch(url, {
-    headers: {
-      accept: "application/json",
-    },
-  });
-  if (res.status !== 200) {
-    throw Error(
-      `Got an error (${res.status}) while getting the stats:\n${await res
-        .text()}`,
-    );
-  }
-  const data = await res.json();
-  if (!data.success) {
-    throw Error(
-      `Got an error (${data.info}) while getting the stats:\n${await res
-        .text()}`,
-    );
-  }
-
-  return data.data;
-}
-
-export function getBasePath({
-  isStd,
-  name,
-  version,
-}: {
-  isStd: boolean;
-  name: string;
-  version?: string;
-}): string {
-  return `${isStd ? "" : "/x"}/${name}${
+  version?: string,
+  path?: string,
+) {
+  return `${name === "std" ? "" : "/x"}/${name}${
     version ? `@${encodeURIComponent(version)}` : ""
-  }`;
+  }${path ?? ""}`;
 }
 
-export const S3_BUCKET =
-  "http://deno-registry2-prod-storagebucket-b3a31d16.s3-website-us-east-1.amazonaws.com/";
+export async function fetchSource(
+  name: string,
+  version: string,
+  path: string,
+): Promise<Response> {
+  const url = getSourceURL(
+    name,
+    version,
+    path.startsWith("/") ? path : `/${path}`,
+  );
 
-export async function fetchSource(remoteUrl: string): Promise<Response> {
   let lastErr;
   for (let i = 0; i < 3; i++) {
     try {
-      const resp = await fetch(remoteUrl);
+      const resp = await fetch(url);
       if (resp.status === 403 || resp.status === 404) {
         await resp.body?.cancel();
-        return new Response("404 Not Found", { status: 404 });
+        return new Response("404 Not Found", {
+          status: 404,
+          headers: { "Access-Control-Allow-Origin": "*" },
+        });
       }
       if (!resp.ok) {
         await resp.body?.cancel();
         throw new TypeError("non 2xx status code returned");
       }
+
+      const headers = new Headers(resp.headers);
+
+      if (
+        path.endsWith(".jsx") &&
+        !headers.get("content-type")?.includes("javascript")
+      ) {
+        headers.set("content-type", "application/javascript");
+      } else if (
+        path.endsWith(".tsx") &&
+        !headers.get("content-type")?.includes("typescript")
+      ) {
+        headers.set("content-type", "application/typescript");
+      }
+
+      headers.set("Access-Control-Allow-Origin", "*");
+
       return new Response(resp.body, {
-        headers: resp.headers,
+        headers,
         status: resp.status,
       });
     } catch (err) {
@@ -586,3 +350,328 @@ export function extractAltLineNumberReference(
     line: parseInt(matches[2]),
   };
 }
+
+/** Matches to https://example.com/foo.ts type string */
+const RE_IS_DENO_LAND_SCRIPT =
+  /^https:\/\/deno\.land\/.*\.(ts|js|tsx|jsx|mts|cts|mjs|cjs)$/;
+const RE_IS_SCRIPT = /\.(ts|js|tsx|jsx|mts|cts|mjs|cjs)$/;
+/** Matches to ./path/to/foo.ts type string */
+const RE_IS_RELATIVE_PATH_SCRIPT =
+  /^\.\.?\/.*\.(ts|js|tsx|jsx|mts|cts|mjs|cjs)$/;
+
+/** Tries to extract link target url from the given target specifier and baseUrl.
+ * The return value is 3-tuple of the link url, the specifier, and the quote character.
+ * Returns undefined if the target isn't url. */
+export function extractLinkUrl(
+  target: string,
+  baseUrl: string,
+): [string, string, string] | undefined {
+  const quote = target[0];
+  const specifier = target.slice(1, -1);
+  if (RE_IS_DENO_LAND_SCRIPT.test(specifier)) {
+    return [specifier, specifier, quote];
+  } else if (
+    RE_IS_RELATIVE_PATH_SCRIPT.test(specifier) &&
+    RE_IS_SCRIPT.test(baseUrl)
+  ) {
+    try {
+      return [new URL(specifier, baseUrl).href, specifier, quote];
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function docAsDescription(doc: string) {
+  return doc.split("\n\n")[0].slice(0, 199);
+}
+
+/** Search parameters which are considered part of a canonical URL.  */
+const CANONICAL_SEARCH_PARAMS = ["s", "source", "doc", "unstable"];
+
+export function getCanonicalUrl(url: URL, latestVersion: string) {
+  const canonical = new URL(url);
+  canonical.hostname = "deno.land";
+  canonical.port = "";
+  canonical.protocol = "https:";
+  canonical.pathname = canonical.pathname.replace(
+    /@[^/]+/,
+    `@${latestVersion}`,
+  );
+  canonical.search = "";
+  for (const param of CANONICAL_SEARCH_PARAMS) {
+    if (url.searchParams.has(param)) {
+      canonical.searchParams.set(param, url.searchParams.get(param)!);
+    }
+  }
+  return canonical;
+}
+
+/** For a LibDocPage, attempt to extract a description to be used with the
+ * content meta for the page. */
+export function getLibDocPageDescription(data: LibDocPage): string | undefined {
+  if (data.kind === "librarySymbol") {
+    for (const docNode of data.docNodes) {
+      if (docNode.jsDoc?.doc) {
+        return docAsDescription(docNode.jsDoc.doc);
+      }
+    }
+  }
+}
+
+export function getDocAsDescription(
+  docNodes: DocNode[],
+  modDoc = false,
+): string | undefined {
+  for (const docNode of docNodes) {
+    if (modDoc) {
+      if (docNode.kind === "moduleDoc") {
+        if (docNode.jsDoc.doc) {
+          return docAsDescription(docNode.jsDoc.doc);
+        } else {
+          return;
+        }
+      }
+    } else if (docNode.jsDoc?.doc) {
+      return docAsDescription(docNode.jsDoc.doc);
+    }
+  }
+}
+
+import type { DocNode, DocNodeKind, JsDoc } from "$deno_doc/types.d.ts";
+
+/** Stored as kind `module_entry` in datastore. */
+export interface ModuleEntry {
+  path: string;
+  type: "file" | "dir";
+  size: number;
+  /** For `"dir"` entries, indicates if there is a _default_ module that should
+   * be used within the directory. */
+  default?: string;
+  /** For `"dir"` entries, an array of child sub-directory paths. */
+  dirs?: string[];
+  /** For `"file`" entries, indicates if the entry id can be queried for doc
+   * nodes. */
+  docable?: boolean;
+  /** For `"dir"` entries, an array of docable child paths that are not
+   * "ignored". */
+  index?: string[];
+}
+
+/** Defines a tag related to how popular a module is. */
+export interface PopularityModuleTag {
+  kind: "popularity";
+  value: "top_1_percent" | "top_5_percent" | "top_10_percent";
+}
+
+/** Defines a "tag" which can be displayed when rending a module or part of a
+ * module. */
+export type ModuleTag = PopularityModuleTag;
+
+export interface PageBase {
+  module: string;
+  description?: string;
+  version: string;
+  path: string;
+  versions: string[];
+  latest_version: string;
+  uploaded_at: string;
+  upload_options: {
+    type: string;
+    repository: string;
+    ref: string;
+    subdir?: string;
+  };
+  /** @deprecated */
+  star_count?: number;
+  tags?: ModuleTag[];
+}
+
+interface DocPageDirItem {
+  kind: "dir";
+  path: string;
+}
+
+interface SymbolItem {
+  name: string;
+  kind: DocNodeKind;
+  category?: string;
+  jsDoc?: JsDoc | null;
+}
+
+export interface IndexItem {
+  kind: "dir" | "module" | "file";
+  path: string;
+  size: number;
+  ignored: boolean;
+  doc?: string;
+}
+
+interface DocPageModuleItem {
+  kind: "module";
+  path: string;
+  items: SymbolItem[];
+  default?: true;
+}
+
+export type DocPageNavItem = DocPageModuleItem | DocPageDirItem;
+
+type DeclarationKind = "private" | "export" | "declare";
+
+export interface SymbolIndexItem {
+  name: string;
+  kind: DocNodeKind;
+  declarationKind: DeclarationKind;
+  filename: string;
+}
+
+export interface DocPageSymbol extends PageBase {
+  kind: "symbol";
+  nav: DocPageNavItem[];
+  name: string;
+  docNodes: DocNode[];
+  symbols: SymbolIndexItem[];
+}
+
+export interface DocPageModule extends PageBase {
+  kind: "module";
+  nav: DocPageNavItem[];
+  docNodes: DocNode[];
+  symbols: SymbolIndexItem[];
+}
+
+export interface DocPageIndex extends PageBase {
+  kind: "index";
+  items: IndexItem[];
+}
+
+export interface DocPageFile extends PageBase {
+  kind: "file";
+}
+
+interface ModInfoDependency {
+  kind: "denoland" | "esm" | "github" | "skypack" | "other";
+  package: string;
+  version: string;
+}
+
+export interface ModInfoPage {
+  kind: "modinfo";
+  module: string;
+  description?: string;
+  version: string;
+  versions: string[];
+  latest_version: string;
+  /** An array of dependencies identified for the module. */
+  dependencies?: ModInfoDependency[];
+  /** The default module for the module. */
+  defaultModule?: ModuleEntry;
+  /** A flag that indicates if the default module has a default export. */
+  defaultExport?: boolean;
+  /** The file entry for the module that is a README to be rendered. */
+  readme?: ModuleEntry;
+  readmeFile?: string;
+  /** The file entry for the module that has a detectable deno configuration. */
+  config?: ModuleEntry;
+  /** The file entry for an import map specified within the detectable config
+   * file. */
+  importMap?: ModuleEntry;
+  uploaded_at: string;
+  upload_options: {
+    type: string;
+    repository: string;
+    ref: string;
+    subdir?: string;
+  };
+  tags?: ModuleTag[];
+}
+
+export type InfoPage = ModInfoPage | PageInvalidVersion | PageNoVersions;
+
+export interface PagePathNotFound extends PageBase {
+  kind: "notfound";
+}
+
+export interface PageNoVersions {
+  kind: "no-versions";
+  module: string;
+}
+
+export interface PageInvalidVersion {
+  kind: "invalid-version";
+  module: string;
+  description?: string;
+  versions: string[];
+  latest_version: string;
+}
+
+/** Stores as kind `doc_page` in datastore. */
+export type DocPage =
+  | DocPageSymbol
+  | DocPageModule
+  | DocPageIndex
+  | DocPageFile
+  | PageInvalidVersion
+  | PageNoVersions
+  | PagePathNotFound;
+
+interface DocPageLibraryBase {
+  kind: string;
+  name: string;
+  version: string;
+  versions: string[];
+  latest_version: string;
+}
+
+export interface DocPageLibrary extends DocPageLibraryBase {
+  kind: "library";
+  items: SymbolItem[];
+}
+
+export interface DocPageLibrarySymbol extends DocPageLibraryBase {
+  kind: "librarySymbol";
+  items: SymbolItem[];
+  name: string;
+  docNodes: DocNode[];
+}
+
+export interface DocPageLibraryInvalidVersion {
+  kind: "libraryInvalidVersion";
+  name: string;
+  versions: string[];
+  latest_version: string;
+}
+
+export type LibDocPage =
+  | DocPageLibrary
+  | DocPageLibrarySymbol
+  | DocPageLibraryInvalidVersion;
+
+export interface SourcePageFile extends PageBase {
+  kind: "file";
+  size: number;
+  /** Indicates if the page is docable or not. */
+  docable?: boolean;
+  file: RawFile | Error;
+}
+
+export interface SourcePageDirEntry {
+  path: string;
+  kind: "file" | "dir";
+  size: number;
+  /** Indicates if the page is docable or not. */
+  docable?: boolean;
+}
+
+export interface SourcePageDir extends PageBase {
+  kind: "dir";
+  entries: SourcePageDirEntry[];
+}
+
+export type SourcePage =
+  | SourcePageFile
+  | SourcePageDir
+  | PageInvalidVersion
+  | PageNoVersions
+  | PagePathNotFound;

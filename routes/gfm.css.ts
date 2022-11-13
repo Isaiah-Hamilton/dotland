@@ -1,3 +1,5 @@
+// Copyright 2022 the Deno authors. All rights reserved. MIT license.
+
 import { CSS } from "$gfm";
 import { Handlers } from "$fresh/server.ts";
 
@@ -10,6 +12,9 @@ const css = `${CSS}
 }
 .markdown-body ol {
   list-style: numeric
+}
+.markdown-body table {
+  width: fit-content;
 }
 `;
 

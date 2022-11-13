@@ -1,11 +1,14 @@
 {
   "tasks": {
-    "dev": "deno run --watch --no-check --allow-read --allow-write --allow-run --allow-env --allow-net main.ts"
+    "start": "deno run -A --watch=routes/,static/ dev.ts",
+    "test": "deno test --allow-net --allow-read --allow-env --allow-hrtime"
   },
   "compilerOptions": {
     "types": [
-      "https://raw.githubusercontent.com/denoland/doc_components/cad26fe716a3775fd952aff6caacb191bc35c2b9/jsx.d.ts"
-    ]
+      "https://raw.githubusercontent.com/denoland/doc_components/cbcaaaf00508c9bd64c3c2ebb4d9899659168a44/jsx.d.ts"
+    ],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact"
   },
   "importMap": "./import_map.json"
 }

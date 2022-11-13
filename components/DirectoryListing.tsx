@@ -1,120 +1,99 @@
 // Copyright 2022 the Deno authors. All rights reserved. MIT license.
 
-/** @jsx runtime.h */
-import { runtime } from "$doc_components/services.ts";
-import { tw } from "@twind";
-import { DirListing, getBasePath } from "@/util/registry_utils.ts";
-import { DirectoryView } from "./DirectoryView.tsx";
+import {
+  getModulePath,
+  type SourcePageDirEntry,
+} from "@/util/registry_utils.ts";
 import * as Icons from "./Icons.tsx";
 
-import { type Index } from "@/util/doc.ts";
-import { ModulePathIndex } from "$doc_components/module_path_index.tsx";
-import { ModuleDoc } from "$doc_components/module_doc.tsx";
-
 export function DirectoryListing(props: {
-  dirListing: DirListing[];
+  items: SourcePageDirEntry[];
   name: string;
-  version: string | undefined;
+  version: string;
   path: string;
-  repositoryURL?: string | null;
+  repositoryURL: string;
   url: URL;
-  index: Index;
+  docable?: boolean;
 }) {
-  const isStd = props.url.pathname.startsWith("/std");
-  const basePath = getBasePath({
-    isStd: isStd,
-    name: props.name,
-    version: props.version,
-  });
-  const baseURL = `https://deno.land${basePath}`;
-  const dirview = props.url.searchParams.has("dirview");
-  const searchDoc = new URL(props.url);
-  searchDoc.searchParams.delete("dirview");
-  const searchDir = new URL(props.url);
-  searchDir.searchParams.set("dirview", "");
+  const doc = new URL(props.url);
+  doc.searchParams.delete("source");
+  if (props.path === "") {
+    doc.searchParams.set("doc", "");
+  }
 
   return (
-    <div class={tw`flex flex-col overflow-x-auto`}>
-      <div
-        class={tw
-          `inline-block min-w-full shadow-sm rounded-lg border border-gray-200 overflow-hidden`}
-      >
-        <div
-          class={tw
-            `bg-gray-100 border-b border-gray-200 py-2 flex justify-between pl-4 ${
-              props.index ? "pr-2" : "pr-4"
-            }`}
-        >
-          <div class={tw`flex items-center`}>
-            <Icons.Folder />
-            <span class={tw`ml-2 font-medium`}>{props.path || "/"}</span>
-          </div>
-          <div class={tw`inline-flex items-center`}>
-            <div>
-              {props.repositoryURL &&
-                (
-                  <a href={props.repositoryURL} class={tw`link ml-4`}>
-                    Repository
-                  </a>
-                )}
-            </div>
-            {props.index && (
-              <div
-                class={tw`inline-block ml-4 inline-flex shadow-sm rounded-md`}
-              >
-                <a
-                  href={searchDoc.href}
-                  class={tw
-                    `relative inline-flex items-center px-1.5 py-1.5 rounded-l-md border border-gray-300 text-sm font-medium text-gray-500 hover:bg-gray-50 ${
-                      !dirview ? "bg-white" : "bg-gray-100"
-                    }`}
-                >
-                  <span class={tw`sr-only`}>Documentation</span>
-                  <Icons.OpenBook />
-                </a>
-                <a
-                  href={searchDir.href}
-                  class={tw
-                    `-ml-px relative inline-flex items-center px-1.5 py-1.5 rounded-r-md border border-gray-300 text-sm font-medium text-gray-500 hover:bg-gray-50 ${
-                      dirview ? "bg-white" : "bg-gray-100"
-                    }`}
-                >
-                  <span class={tw`sr-only`}>Directory Listing</span>
-                  <Icons.Code />
-                </a>
-              </div>
-            )}
-          </div>
+    <div class="border border-gray-200 rounded-lg">
+      <div class="py-3 px-5 flex justify-between items-center">
+        <div class="flex items-center gap-2">
+          <Icons.Index class="h-4 w-auto text-gray-500" />
+          <span class="text-lg leading-5 font-semibold">Directory</span>
         </div>
-
-        {dirview || (props.index === null)
-          ? (
-            <DirectoryView
-              dirListing={props.dirListing}
-              path={props.path}
-              url={props.url}
-              baseURL={basePath}
-            />
-          )
-          : (
-            <div class={tw`bg-white dark:(bg-gray-900 text-white)`}>
-              {props.index.index && (
-                <ModulePathIndex
-                  base={basePath}
-                  path={props.path || "/"}
-                  skipMods={!!props.index.indexModule}
-                >
-                  {props.index.index}
-                </ModulePathIndex>
-              )}
-              {props.index.indexModule && (
-                <ModuleDoc url={`${baseURL}${props.index.indexModule}`}>
-                  {props.index.nodes}
-                </ModuleDoc>
-              )}
-            </div>
-          )}
+        <div class="flex items-center gap-3">
+          <a
+            href={props.repositoryURL}
+            title="Repository URL"
+            class="icon-button"
+          >
+            <Icons.GitHub class="h-4 w-auto" />
+          </a>
+          <a href={doc.href} title="Documentation" class="icon-button">
+            <Icons.Docs class="h-4 w-auto" />
+          </a>
+        </div>
       </div>
+
+      <DirectoryView
+        items={props.items}
+        path={props.path}
+        url={props.url}
+        baseURL={getModulePath(props.name, props.version)}
+      />
     </div>
   );
+}
+
+export function DirectoryView(props: {
+  items: SourcePageDirEntry[];
+  path: string;
+  url: URL;
+  baseURL: string;
+}) {
+  // prioritize dirs and secondarily order by path alphabetically
+  props.items.sort((a, b) =>
+    ((a.kind === "dir" && b.kind !== "dir")
+      ? -1
+      : (b.kind === "dir" ? 1 : 0)) || a.path.localeCompare(b.path)
+  );
+
+  return (
+    <ul>
+      {props.items.map((item) => (
+        <li class="rounded-md odd:bg-ultralight group">
+          <a
+            href={`${props.baseURL}${item.path}?source`}
+            class="py-2.5 px-5 flex justify-between items-center"
+          >
+            <span class="flex items-center gap-3">
+              {item.kind === "file"
+                ? <Icons.Source class="text-gray-500" />
+                : <Icons.Folder class="text-gray-500" />}
+              <span class="link group-hover:text-blue-400">
+                {item.path.split("/").at(-1)}
+              </span>
+            </span>
+            <span class="text-sm text-gray-400">
+              {bytesToSize(item.size)}
+            </span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function bytesToSize(bytes: number) {
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  if (bytes == 0) return "0 B";
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(0) + " " + sizes[i];
 }
